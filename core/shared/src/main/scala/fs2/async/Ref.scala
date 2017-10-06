@@ -127,6 +127,23 @@ final class Ref[F[_],A](implicit F: Effect[F], ec: ExecutionContext) { self =>
       case Some(changeAndB) => F.pure(changeAndB)
     }
 
+  // def modifyF[B](f: A => F[A]): F[Change[A]] =
+  //   access.flatMap { case (previous, set) =>
+  //     f(previous).flatMap { now =>
+  //       set(Right(now)).flatMap { succeeded =>
+  //         if(succeeded) F.pure(Change(previous, now))
+  //         else modifyF(f)
+  //       }
+  //     }
+  //   }
+
+  def modifyF[B](f: A => F[A]): F[Change[A]] = 
+    get.flatMap { value =>
+      f(value).flatMap { result =>
+        setSyncPure(result).as(Change(value, result))
+      }
+    }
+
   /**
    * *Asynchronously* sets a reference. After the returned `F[Unit]` is bound,
    * the task is running in the background. Multiple tasks may be added to a
