@@ -54,6 +54,24 @@ final class Ref[F[_],A](implicit F: Effect[F], ec: ExecutionContext) { self =>
       }
       else cb(Right(false))
 
+    case Msg.TrySetF(id, io, cb) =>
+      if (id == nonce) {
+        nonce += 1L; val id2 = nonce
+        var r: Either[Throwable, A] = null
+        io.runAsync(x => IO(r = x)).unsafeRunSync
+        r match {
+          case Right(_) =>
+            waiting.values.foreach { cb =>
+              ec.execute { () => cb((r: Either[Throwable, A]).map((_,id2))) } // does this need to happen on all cases? or just when no errors are there?
+            }
+            waiting = LinkedMap.empty
+            result = r
+            cb(Right(true))
+          case Left(e) => cb(Left(e))
+        }
+      }
+      else cb(Right(false))
+
     case Msg.Nevermind(id, cb) =>
       val interrupted = waiting.get(id).isDefined
       waiting = waiting - id
@@ -127,6 +145,41 @@ final class Ref[F[_],A](implicit F: Effect[F], ec: ExecutionContext) { self =>
       case Some(changeAndB) => F.pure(changeAndB)
     }
 
+  /**
+   * Obtains a snapshot of the current value of the `Ref`, and a setter
+   * for updating the value. The setter may noop (in which case `false`
+   * is returned) if another concurrent call to `access` uses its
+   * setter first. Once it has noop'd or been used once, a setter
+   * never succeeds again.
+   */
+  def accessF: F[(A, IO[A] => F[Boolean])] =
+    F.flatMap(F.delay(new MsgId)) { mid =>
+      F.map(getStamped(mid)) { case (a, id) =>
+        val set = (a: IO[A]) =>
+          F.async[Boolean] { cb => actor ! Msg.TrySetF(id, a, cb) }
+        (a, set)
+      }
+    }
+
+  /**
+   * Tries modifying the reference once, returning `None` if another
+   * concurrent `set` or `modify` completes between the time
+   * the variable is read and the time it is set.
+   */
+  def tryModifyF(f: A => F[A]): F[Option[Change[A]]] = F.suspend {
+    access.flatMap { case (previous,set) =>
+      @volatile var now: A = null // what to do if F fails? don't set anything and fail the task?
+      val res = f(previous).runAsync {
+        case Left(e) => IO.fail(e)
+        case Right(r) => IO(now = r)
+      }
+      set(res).map { b =>
+        if (b) Some(Change(previous, now))
+        else None
+      }
+    }
+  }
+
   // def modifyF[B](f: A => F[A]): F[Change[A]] =
   //   access.flatMap { case (previous, set) =>
   //     f(previous).flatMap { now =>
@@ -137,12 +190,12 @@ final class Ref[F[_],A](implicit F: Effect[F], ec: ExecutionContext) { self =>
   //     }
   //   }
 
-  def modifyF[B](f: A => F[A]): F[Change[A]] = 
-    get.flatMap { value =>
-      f(value).flatMap { result =>
-        setSyncPure(result).as(Change(value, result))
-      }
-    }
+  // def modifyF[B](f: A => F[A]): F[Change[A]] = 
+  //   get.flatMap { value =>
+  //     f(value).flatMap { result =>
+  //       setSyncPure(result).as(Change(value, result))
+  //     }
+  //   }
 
   /**
    * *Asynchronously* sets a reference. After the returned `F[Unit]` is bound,
@@ -216,6 +269,7 @@ object Ref {
     final case class Nevermind[A](id: MsgId, cb: Either[Throwable,Boolean] => Unit) extends Msg[A]
     final case class Set[A](r: Either[Throwable,A], cb: () => Unit) extends Msg[A]
     final case class TrySet[A](id: Long, r: Either[Throwable,A], cb: Either[Throwable,Boolean] => Unit) extends Msg[A]
+    final case class TrySetF[A](id: Long, r: IO[A], cb: Either[Throwable,Boolean] => Unit) extends Msg[A]
   }
 
   /**
