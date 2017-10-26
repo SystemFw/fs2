@@ -19,7 +19,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
 
   private var result: R[A] = null
   // any waiting calls to `access` before first `set`
-  private var waiting: LinkedMap[MsgId, R[(A, Long)] => Unit] = LinkedMap.empty
+  private var waiting: LinkedMap[MsgId, (A, Long) => Unit] = LinkedMap.empty
   // id which increases with each `set` or successful `modify`
   private var nonce: Long = 0
 
@@ -30,7 +30,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
       } else {
         val r = result
         val id = nonce
-        ec.execute { () => cb((r: R[A]).map((_,id))) }
+        ec.execute { () => cb(r.value, id) }
       }
 
     case Msg.Set(r, cb) =>
@@ -38,21 +38,21 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
       if (result eq null) {
         val id = nonce
         waiting.values.foreach { cb =>
-          ec.execute { () => cb((r: R[A]).map((_,id))) }
+          ec.execute { () => cb(r, id) }
         }
         waiting = LinkedMap.empty
       }
-      result = r
+      result = R(r)
       cb()
 
     case Msg.TrySet(id, r, cb) =>
       if (id == nonce) {
         nonce += 1L; val id2 = nonce
         waiting.values.foreach { cb =>
-          ec.execute { () => cb((r: R[A]).map((_,id2))) }
+          ec.execute { () => cb(r, id2) }
         }
         waiting = LinkedMap.empty
-        result = r
+        result = R(r)
         cb(true)
       }
       else cb(false)
@@ -74,7 +74,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
     F.flatMap(F.delay(new MsgId)) { mid =>
       F.map(getStamped(mid)) { case (a, id) =>
         val set = (a: A) =>
-          F.async[Boolean] { cb => actor ! Msg.TrySet(id, R(a), (b: Boolean) => cb(Right(b))) }
+          F.async[Boolean] { cb => actor ! Msg.TrySet(id, a, (b: Boolean) => cb(Right(b))) }
         (a, set)
       }
     }
@@ -151,7 +151,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
   def setAsync(fa: F[A]): F[Unit] =
     F.liftIO(F.runAsync(F.shift(ec) >> fa) {
       case Left(e) => IO.raiseError(e)
-      case Right(v) => IO(actor ! Msg.Set(R(v), () => ()))
+      case Right(v) => IO(actor ! Msg.Set(v, () => ()))
     })
 
   /**
@@ -159,13 +159,13 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
    *
    * Satisfies: `r.setAsyncPure(a) flatMap { _ => r.get(a) } == pure(a)`
    */
-  def setAsyncPure(a: A): F[Unit] = F.delay { actor ! Msg.Set(R(a), () => ()) }
+  def setAsyncPure(a: A): F[Unit] = F.delay { actor ! Msg.Set(a, () => ()) }
 
   /**
    * *Synchronously* sets a reference. The returned value completes evaluating after the reference has been successfully set.
    */
   def setSync(fa: F[A]): F[Unit] =
-    F.flatMap(fa)(r => F.async(cb => actor ! Msg.Set(R(r), () => cb(Right(())))))
+    F.flatMap(fa)(r => F.async(cb => actor ! Msg.Set(r, () => cb(Right(())))))
 
   /**
    * *Synchronously* sets a reference to a pure value.
@@ -190,7 +190,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
           case Right(r) =>
             val actor = ref.get
             ref.set(null)
-            actor ! Msg.Set(R(r), () => ())
+            actor ! Msg.Set(r, () => ())
           case Left(e) => throw e
         }
       }
@@ -200,7 +200,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
   }
 
   private def getStamped(msg: MsgId): F[(A,Long)] =
-    F.async[(A,Long)] { cb => actor ! Msg.Read((r: R[(A, Long)]) => cb(Right(r.a)), msg) }
+    F.async[(A,Long)] { cb => actor ! Msg.Read((r: A, id: Long) => cb(Right(r -> id)), msg) }
 }
 
 object Ref {
@@ -216,16 +216,14 @@ object Ref {
   private final class MsgId
   private sealed abstract class Msg[A]
   private object Msg {
-    final case class Read[A](cb: R[(A, Long)] => Unit, id: MsgId) extends Msg[A]
+    final case class Read[A](cb: (A, Long) => Unit, id: MsgId) extends Msg[A]
     final case class Nevermind[A](id: MsgId, cb: Boolean => Unit) extends Msg[A]
-    final case class Set[A](r: R[A], cb: () => Unit) extends Msg[A]
-    final case class TrySet[A](id: Long, r: R[A], cb: Boolean => Unit) extends Msg[A]
+    final case class Set[A](r: A, cb: () => Unit) extends Msg[A]
+    final case class TrySet[A](id: Long, r: A, cb: Boolean => Unit) extends Msg[A]
   }
 
 
-  private[Ref] final case class R[A](a: A) {
-    def map[B](f: A => B): R[B] = R(f(a))
-  }
+  private[Ref] final case class R[A](value: A)
 
   /**
    * The result of a `Ref` modification. `previous` is the value before modification
