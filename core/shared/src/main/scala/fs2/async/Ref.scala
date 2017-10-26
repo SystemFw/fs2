@@ -17,7 +17,8 @@ import Ref._
 /** An asynchronous, concurrent mutable reference. */
 final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContext) { self =>
 
-  private var result: R[A] = null
+
+  private var result: Opt[A] = null
   // any waiting calls to `access` before first `set`
   private var waiting: LinkedMap[MsgId, (A, Long) => Unit] = LinkedMap.empty
   // id which increases with each `set` or successful `modify`
@@ -42,7 +43,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
         }
         waiting = LinkedMap.empty
       }
-      result = R(r)
+      result = Opt(r)
       cb()
 
     case Msg.TrySet(id, r, cb) =>
@@ -52,7 +53,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
           ec.execute { () => cb(r, id2) }
         }
         waiting = LinkedMap.empty
-        result = R(r)
+        result = Opt(r)
         cb(true)
       }
       else cb(false)
@@ -87,7 +88,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
     val id = new MsgId
     val get = F.map(getStamped(id))(_._1)
     val cancel = F.async[Unit] {
-      cb => actor ! Msg.Nevermind(id, r => cb(Right(r).map(_ => ())))
+      cb => actor ! Msg.Nevermind(id, r => cb((Right(r) : Either[Throwable, Boolean]).map(_ => ())))
     }
     (get, cancel)
   }
@@ -151,7 +152,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
   def setAsync(fa: F[A]): F[Unit] =
     F.liftIO(F.runAsync(F.shift(ec) >> fa) {
       case Left(e) => IO.raiseError(e)
-      case Right(v) => IO(actor ! Msg.Set(v, () => ()))
+      case Right(r) => IO(actor ! Msg.Set(r, () => ()))
     })
 
   /**
@@ -187,11 +188,11 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
       // references behind it!
       if (won.compareAndSet(false, true)) {
         res match {
-          case Right(r) =>
+          case Left(e) => throw e
+          case Right(res) =>
             val actor = ref.get
             ref.set(null)
-            actor ! Msg.Set(r, () => ())
-          case Left(e) => throw e
+            actor ! Msg.Set(res, () => ())
         }
       }
     }
@@ -200,7 +201,7 @@ final class Ref[F[_],A] private[fs2] (implicit F: Effect[F], ec: ExecutionContex
   }
 
   private def getStamped(msg: MsgId): F[(A,Long)] =
-    F.async[(A,Long)] { cb => actor ! Msg.Read((r: A, id: Long) => cb(Right(r -> id)), msg) }
+    F.async[(A,Long)] { cb => actor ! Msg.Read((a: A, id: Long) => cb(Right(a -> id)), msg) }
 }
 
 object Ref {
@@ -222,8 +223,7 @@ object Ref {
     final case class TrySet[A](id: Long, r: A, cb: Boolean => Unit) extends Msg[A]
   }
 
-
-  private[Ref] final case class R[A](value: A)
+  final case class Opt[A](value: A)
 
   /**
    * The result of a `Ref` modification. `previous` is the value before modification

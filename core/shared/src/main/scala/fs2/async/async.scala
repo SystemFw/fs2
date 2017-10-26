@@ -94,7 +94,7 @@ package object async {
    * bound. The inner `F[A]` will block until the result is available.
    */
   def start[F[_], A](f: F[A])(implicit F: Effect[F], ec: ExecutionContext): F[F[A]] =
-    ref[F, Either[Throwable, A]].flatMap { ref => ref.setAsync(F.shift(ec) >> f.attempt).as(ref.get.flatMap(F.fromEither[A])) }
+    ref[F, Either[Throwable, A]].flatMap { ref => ref.setAsync(F.shift(ec) >> f.attempt).as(ref.get.flatMap(F.fromEither)) }
 
   /**
    * Begins asynchronous evaluation of `f` when the returned `F[Unit]` is
