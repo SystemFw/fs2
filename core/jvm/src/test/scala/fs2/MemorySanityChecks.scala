@@ -207,6 +207,31 @@ object MinST7 extends App {
     .unsafeRunSync
 }
 
+object MinST8 extends App {
+
+  import fs2.internal._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+
+  def startTimeout(previousFinaliser: Stream[IO, Unit],
+                   num: Int): Stream[IO, (Stream[IO, Unit], Int)] =
+    Stream
+      .bracketWithToken(IO(println(s"executing $num"))) {
+        case (unit, exitCase) =>
+          IO(println(s"released $num"))
+      }
+      .flatMap {
+        case (t, _) =>
+          val release = Stream.fromFreeC(Algebra.release(t, None)) ++ Stream.emit(())
+
+          previousFinaliser.as(release -> (num + 1))
+      }
+
+  def read(finaliser: Stream[IO, Unit], num: Int = 0): Stream[IO, Unit] =
+    startTimeout(finaliser, num).flatMap { case (newFinaliser, next) => read(newFinaliser, next) }
+
+  read(Stream.eval(IO.unit)).compile.drain.unsafeRunSync
+}
 // Sanity tests - not run as part of unit tests, but these should run forever
 // at constant memory.
 object GroupWithinSanityTest extends App {
