@@ -207,6 +207,7 @@ object MinST7 extends App {
     .unsafeRunSync
 }
 
+// calls release correctly, still leaks
 object MinST8 extends App {
 
   import fs2.internal._
@@ -225,6 +226,33 @@ object MinST8 extends App {
           val release = Stream.fromFreeC(Algebra.release(t, None)) ++ Stream.emit(())
 
           previousFinaliser.as(release -> (num + 1))
+      }
+
+  def read(finaliser: Stream[IO, Unit], num: Int = 0): Stream[IO, Unit] =
+    startTimeout(finaliser, num).flatMap { case (newFinaliser, next) => read(newFinaliser, next) }
+
+  read(Stream.eval(IO.unit)).compile.drain.unsafeRunSync
+}
+
+// doesn't call release timely (back to the initial leak)
+object MinST9 extends App {
+
+  import fs2.internal._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+
+  def startTimeout(previousFinaliser: Stream[IO, Unit],
+                   num: Int): Stream[IO, (Stream[IO, Unit], Int)] =
+    previousFinaliser.drain ++ Stream
+      .bracketWithToken(IO(println(s"executing $num"))) {
+        case (unit, exitCase) =>
+          IO(println(s"released $num"))
+      }
+      .map {
+        case (t, _) =>
+          val release = Stream.fromFreeC(Algebra.release(t, None)) ++ Stream.emit(())
+
+          release -> (num + 1)
       }
 
   def read(finaliser: Stream[IO, Unit], num: Int = 0): Stream[IO, Unit] =
