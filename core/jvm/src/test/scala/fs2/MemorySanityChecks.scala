@@ -4,6 +4,209 @@ import scala.concurrent.ExecutionContext
 import cats.effect.{ContextShift, IO, Timer}
 import fs2.concurrent.{Queue, SignallingRef, Topic}
 
+// leak
+object MinST extends App {
+  import cats.implicits._
+  import scala.concurrent.duration._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  Stream
+    .eval(cats.effect.concurrent.Semaphore[IO](0))
+    .flatMap { s =>
+      val prog = timer.sleep(d) *> s.release
+
+      def startTimeout: Stream[IO, Unit] =
+        Stream.bracket(prog.start)(fiber => IO(println("released"))).void
+
+      def read: Stream[IO, Unit] = Stream.eval(s.acquire).flatMap { _ =>
+        startTimeout.flatMap(_ => read)
+      }
+
+      startTimeout.flatMap(_ => read)
+    }
+    .compile
+    .drain
+    .unsafeRunSync
+}
+// no leak but not the same logic in the real case (flatMap is needed)
+object MinST2 extends App {
+  import cats.implicits._
+  import scala.concurrent.duration._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  Stream
+    .eval(cats.effect.concurrent.Semaphore[IO](0))
+    .flatMap { s =>
+      val prog = timer.sleep(d) *> s.release
+
+      def startTimeout: Stream[IO, Unit] =
+        Stream.bracket(prog.start)(fiber => IO(println("released"))).void
+
+      def read: Stream[IO, Unit] = Stream.eval(s.acquire).flatMap { _ =>
+        startTimeout ++ read
+      }
+
+      startTimeout.flatMap(_ => read)
+    }
+    .compile
+    .drain
+    .unsafeRunSync
+}
+
+// leak, even though release is called
+object MinST3 extends App {
+  import cats.implicits._
+  import scala.concurrent.duration._
+  import cats.effect.concurrent._
+  import fs2.internal._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  Stream
+    .eval(Semaphore[IO](0).product(Ref[IO].of(Stream.eval(IO.unit))))
+    .flatMap {
+      case (s, ref) =>
+        val prog = timer.sleep(d) *> s.release
+
+        def startTimeout: Stream[IO, Unit] =
+          Stream
+            .bracketWithToken(prog.start) { case (fiber, _) => IO(println("released")) }
+            .flatMap {
+              case (t, _) =>
+                val releaseAction
+                  : Stream[IO, Unit] = Stream.fromFreeC(Algebra.release(t, None)) ++ Stream.emit(())
+
+                Stream.eval(ref.getAndSet(releaseAction)).flatten
+            }
+
+        def read: Stream[IO, Unit] = Stream.eval(s.acquire).flatMap { _ =>
+          startTimeout.flatMap(_ => read)
+        }
+
+        startTimeout.flatMap(_ => read)
+    }
+    .compile
+    .drain
+    .unsafeRunSync
+}
+
+// no leak, but startTimeout is not resource safe
+object MinST4 extends App {
+  import cats.implicits._
+  import scala.concurrent.duration._
+  import cats.effect.concurrent._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  Stream
+    .eval(Semaphore[IO](0))
+    .flatMap { s =>
+      val prog = timer.sleep(d) *> s.release
+
+      def startTimeout: Stream[IO, Unit] =
+        Stream.eval(prog.start).void
+
+      def read: Stream[IO, Unit] = Stream.eval(s.acquire).flatMap { _ =>
+        startTimeout.flatMap(_ => read)
+      }
+
+      startTimeout.flatMap(_ => read)
+    }
+    .compile
+    .drain
+    .unsafeRunSync
+}
+
+// minimised no leak without resource safety
+object MinST5 extends App {
+  import scala.concurrent.duration._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  val prog = timer.sleep(d)
+
+  def startTimeout: Stream[IO, Unit] =
+    Stream.eval(prog)
+
+  def read: Stream[IO, Unit] = startTimeout.flatMap(_ => read)
+
+  read.compile.drain.unsafeRunSync
+}
+
+// minimised leak with resource safety
+object MinST6 extends App {
+  import scala.concurrent.duration._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  val prog = timer.sleep(d)
+
+  def startTimeout: Stream[IO, Unit] =
+    Stream.bracket(prog)(_ => IO(println("release")))
+
+  def read: Stream[IO, Unit] = startTimeout.flatMap(_ => read)
+
+  read.compile.drain.unsafeRunSync
+}
+
+// release is called timely, but it still leaks
+object MinST7 extends App {
+  import scala.concurrent.duration._
+  import cats.effect.concurrent._
+  import fs2.internal._
+
+  implicit val cs: ContextShift[IO] = IO.contextShift(ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(ExecutionContext.global)
+
+  val d = 1.millis
+
+  Stream
+    .eval(Ref[IO].of(Stream.eval(IO.unit)))
+    .flatMap { ref =>
+      val prog: IO[Unit] = timer.sleep(d)
+
+      def startTimeout: Stream[IO, Unit] =
+        Stream
+          .bracketWithToken(prog) {
+            case (unit, exitCase) =>
+              IO(println("release"))
+          }
+          .flatMap {
+            case (t, _) =>
+              val release = Stream.fromFreeC(Algebra.release(t, None)) ++ Stream.emit(())
+
+              Stream.eval(ref.getAndSet(release)).flatten
+          }
+
+      def read: Stream[IO, Unit] = startTimeout.flatMap(_ => read)
+
+      read
+    }
+    .compile
+    .drain
+    .unsafeRunSync
+}
+
 // Sanity tests - not run as part of unit tests, but these should run forever
 // at constant memory.
 object GroupWithinSanityTest extends App {
