@@ -1115,34 +1115,25 @@ final class Stream[+F[_], +O] private (private val free: FreeC[Algebra[Nothing, 
       .eval {
         Queue
           .synchronousNoneTerminated[F2, Either[Token, Chunk[O]]]
-          .product(Ref[F2].of(F.unit -> false))
+          .product(Ref[F2].of(Stream.emit(()).covary[F2]))
       }
       .flatMap {
         case (q, currentTimeout) =>
+          // add comment on timeout leak (bracket), memory leak (early finalisation), and races (versioning) avoided by this
           def startTimeout: Stream[F2, Token] =
-            Stream.eval(F.delay(new Token)).evalTap { t =>
-              val timeout = timer.sleep(d) *> q.enqueue1(t.asLeft.some)
-
-              // Just using `supervise(timeout)` will ensure resource safety
-              // but finalisers accumulate and cause a leak, so we
-              // need to dispose of outstanding timeouts manually
-              timeout.start
-                .bracket(_ => F.unit) { fiber =>
-                  // note the this is in a `release` action, and therefore uninterruptible
-                  currentTimeout.modify {
-                    case st @ (cancelInFlightTimeout, streamTerminated) =>
-                      if (streamTerminated) {
-                        // the stream finaliser will cancel the in flight
-                        // timeout, we need to cancel the timeout we have
-                        // just started
-                        st -> fiber.cancel
-                      } else {
-                        // The stream finaliser hasn't run, so we cancel
-                        // the current timeout and store the finaliser for
-                        // the timeout we have just started
-                        (fiber.cancel, streamTerminated) -> cancelInFlightTimeout
-                      }
-                  }.flatten
+            Stream.eval(F.delay(new Token)).flatTap { timeout =>
+              val timeoutF = timer.sleep(d) *> q.enqueue1(timeout.asLeft.some)
+              // TODO avoid canceling on completion?
+              Stream
+                .bracketWithToken(F.delay(println(s"$timeout acq")) *> timeoutF.start) {
+                  case (fiber, _) => fiber.cancel
+                }
+                .flatMap {
+                  case (t, _) =>
+                    val cancelNewTimeout: Stream[F2, Unit] =
+                      Stream.fromFreeC(Algebra.release(t, None)) ++ Stream.eval_(
+                        F.delay(println(s"$timeout res"))) ++ Stream.emit(())
+                    Stream.force(currentTimeout.getAndSet(cancelNewTimeout))
                 }
             }
 
@@ -1184,12 +1175,6 @@ final class Stream[+F[_], +O] private (private val free: FreeC[Algebra[Nothing, 
           startTimeout
             .flatMap { t =>
               go(Chain.empty, 0, t).concurrently(producer)
-            }
-            .onFinalize {
-              currentTimeout.modify {
-                case st @ (cancelInFlightTimeout, streamTerminated) =>
-                  (F.unit, true) -> cancelInFlightTimeout
-              }.flatten
             }
       }
 
