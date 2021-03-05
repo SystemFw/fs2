@@ -25,6 +25,7 @@ import cats.effect._
 import cats.effect.std._
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all._
+import scala.concurrent.duration._
 
 object Ex {
 
@@ -81,4 +82,19 @@ object Ex {
         .parJoinUnbounded
     }
   }
+
+
+  def e =
+    Stream
+      .range(0, 20)
+      .through {
+        p1((_: Int) % 2) { r =>
+          if (r == 0)
+            (_: Stream[IO, Int]).metered(200.millis).debug(v => s"evens $v")
+          else
+            (_: Stream[IO, Int]).metered(300.millis).take(1).debug(v => s"odds $v")
+
+        }
+      }.compile.drain.unsafeToFuture()
+
 }
