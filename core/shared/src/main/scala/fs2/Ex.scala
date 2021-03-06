@@ -205,11 +205,6 @@ object Ex {
 
           def get: Stream[F, A]  =
             Stream.eval {
-              // do I need to do anything about interruption here actually?
-              // I need to (conditionally on setting) delete the whole channel
-              // but nothing inside the channel itself I don't think, since
-              // it's per pipe
-              F.uncancelable { poll =>
                 F.deferred[Unit].flatMap { wait =>
                   state.modify {
                     case State(values, _, closed) =>
@@ -224,13 +219,12 @@ object Ex {
                       } else {
                         val newSt = State(values, wait.some, closed)
                         val action =
-                          if (!closed) Stream.exec(poll(wait.get)) ++ get
+                          if (!closed) Stream.exec(wait.get) ++ get
                           else Stream.empty
 
                         newSt -> action
                       }
                   }
-                }
               }
             }.flatten
 
