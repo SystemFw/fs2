@@ -174,11 +174,11 @@ object Ex {
 
 
 
-  // Single producer single consumer
+  // Multiple producer, single consumer closeable channel
   trait Channel[F[_], A] {
     def send(a: A): F[Unit]
     def close: F[Unit]
-    def get: Stream[F, A]
+    def get: Pull[F, A, Unit]
   }
   object Channel {
     def create[F[_], A](implicit F: Concurrent[F]): F[Channel[F, A]] = {
@@ -203,28 +203,26 @@ object Ex {
                 State(values, None, true) -> wait.traverse_(_.complete(()))
             }.flatten.uncancelable
 
-          def get: Stream[F, A]  =
-            Stream.eval {
-                F.deferred[Unit].flatMap { wait =>
-                  state.modify {
-                    case State(values, _, closed) =>
-                      if (values.nonEmpty) {
-                        val newSt = State(Vector(), None, closed)
-                        val emit = Stream.chunk(Chunk.vector(values))
-                        val action =
-                          if (!closed) emit ++ get
-                          else emit
+          def get: Pull[F, A, Unit]  =
+            Pull.eval {
+              F.deferred[Unit].flatMap { wait =>
+                state.modify {
+                  case State(values, _, closed) =>
+                    if (values.nonEmpty) {
+                      val newSt = State(Vector(), None, closed)
+                      val emit = Pull.output(Chunk.vector(values))
+                      val action =
+                        emit >> get.unlessA(closed)
 
-                        newSt -> action
-                      } else {
-                        val newSt = State(values, wait.some, closed)
-                        val action =
-                          if (!closed) Stream.exec(wait.get) ++ get
-                          else Stream.empty
+                      newSt -> action
+                    } else {
+                      val newSt = State(values, wait.some, closed)
+                      val action =
+                        (Pull.eval(wait.get) >> get).unlessA(closed)
 
-                        newSt -> action
-                      }
-                  }
+                      newSt -> action
+                    }
+                }
               }
             }.flatten
 
