@@ -24,8 +24,21 @@ The fs2-core as well as fs2-io and fs2-scodec libraries are also supported on Sc
 
 ```
 libraryDependencies += "co.fs2" %%% "fs2-core" % "0.10.0-M3"
-libraryDependencies += "co.fs2" %%% "fs2-io" % "0.10.0-M3" // Node.js only
 libraryDependencies += "co.fs2" %%% "fs2-scodec" % "0.10.0-M3"
+
+// Node.js only, and requires module support to be enabled
+libraryDependencies += "co.fs2" %%% "fs2-io" % "0.10.0-M3"
+scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)) 
+```
+
+The fs2-core as well as fs2-io and fs2-scodec libraries are also supported on Scala Native:
+```
+libraryDependencies += "co.fs2" %%% "fs2-core" % "0.10.0-M3"
+libraryDependencies += "co.fs2" %%% "fs2-scodec" % "0.10.0-M3"
+
+// TCP support requires https://github.com/armanbilge/epollcat/
+// TLS support requires https://github.com/aws/s2n-tls
+libraryDependencies += "co.fs2" %%% "fs2-io" % "0.10.0-M3"
 ```
 
 Release notes for each release are available on [Github](https://github.com/typelevel/fs2/releases/).

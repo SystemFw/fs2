@@ -262,7 +262,7 @@ val release = IO { println("decremented: " + count.decrementAndGet); () }
 ```scala
 Stream.bracket(acquire)(_ => release).flatMap(_ => Stream(1,2,3) ++ err).compile.drain.unsafeRunSync()
 // java.lang.Exception: oh noes!
-// 	at repl.MdocSession$App.<init>(guide.md:149)
+// 	at repl.MdocSession$MdocApp.<init>(guide.md:149)
 // 	at repl.MdocSession$.app(guide.md:3)
 ```
 
@@ -353,7 +353,7 @@ The `Pull[F[_],O,R]` type represents a program that may pull values from one or 
 [`Pull` class](https://github.com/functional-streams-for-scala/fs2/blob/main/core/shared/src/main/scala/fs2/Pull.scala)
 for the full set of operations on `Pull`.
 
-A pull that writes a single a single output of type `Int` can be constructed with `Pull.output1`.
+A pull that writes a single output of type `Int` can be constructed with `Pull.output1`.
 
 ```scala
 import fs2._
@@ -590,10 +590,11 @@ val program =
 // program: Stream[[x]IO[x], Unit] = Stream(..)
 
 program.compile.drain.unsafeRunSync()
-// 22:56:06.447709516
-// 22:56:07.445616482
-// 22:56:08.445287951
-// 22:56:09.445255700
+// 23:59:01.983031182
+// 23:59:02.981779340
+// 23:59:03.981579906
+// 23:59:04.981390073
+// 23:59:05.981474938
 ```
 
 Let's take this line by line now, so we can understand what's going on.
@@ -635,10 +636,10 @@ val program1 =
 // program1: Stream[[x]IO[x], Unit] = Stream(..)
 
 program1.compile.drain.unsafeRunSync()
-// 22:56:11.447365925
-// 22:56:12.447453475
-// 22:56:13.447465124
-// 22:56:14.447616875
+// 23:59:06.985868385
+// 23:59:07.985969050
+// 23:59:08.986032716
+// 23:59:09.986118181
 ```
 
 ### Talking to the external world
@@ -671,7 +672,7 @@ The way you bring synchronous effects into your effect type may differ. `Sync.de
 import cats.effect.Sync
 
 val T = Sync[IO]
-// T: cats.effect.kernel.Async[IO] = cats.effect.IO$$anon$4@9ab3140
+// T: cats.effect.kernel.Async[IO] = cats.effect.IO$$anon$5@7febce19
 val s2 = Stream.exec(T.delay { destroyUniverse() }) ++ Stream("...moving on")
 // s2: Stream[[x]IO[x], String] = Stream(..)
 s2.compile.toVector.unsafeRunSync()
@@ -804,13 +805,13 @@ stream.toUnicastPublisher
 //   source = Bind(
 //     source = Bind(
 //       source = Allocate(
-//         resource = cats.effect.kernel.Resource$$$Lambda$11948/0x0000000802c547c0@381a849a
+//         resource = cats.effect.kernel.Resource$$$Lambda$11945/0x0000000802bceda8@4399b0c
 //       ),
-//       fs = cats.effect.kernel.Resource$$Lambda$12503/0x000000080253b668@31c66c3b
+//       fs = cats.effect.kernel.Resource$$Lambda$12508/0x0000000802d040c8@5cf6dc2
 //     ),
-//     fs = cats.effect.std.Dispatcher$$$Lambda$12504/0x000000080253ba38@15f289c6
+//     fs = cats.effect.std.Dispatcher$$$Lambda$12509/0x0000000802d04498@7034bfad
 //   ),
-//   fs = cats.effect.kernel.Resource$$Lambda$12503/0x000000080253b668@45038b09
+//   fs = cats.effect.kernel.Resource$$Lambda$12508/0x0000000802d040c8@510e2cb4
 // )
 ```
 
@@ -822,19 +823,19 @@ val publisher: Resource[IO, StreamUnicastPublisher[IO, Int]] = Stream(1, 2, 3).c
 //   source = Bind(
 //     source = Bind(
 //       source = Allocate(
-//         resource = cats.effect.kernel.Resource$$$Lambda$11948/0x0000000802c547c0@29d1e967
+//         resource = cats.effect.kernel.Resource$$$Lambda$11945/0x0000000802bceda8@19272c62
 //       ),
-//       fs = cats.effect.kernel.Resource$$Lambda$12503/0x000000080253b668@2b74efd2
+//       fs = cats.effect.kernel.Resource$$Lambda$12508/0x0000000802d040c8@6778f3f9
 //     ),
-//     fs = cats.effect.std.Dispatcher$$$Lambda$12504/0x000000080253ba38@2ac9ffc3
+//     fs = cats.effect.std.Dispatcher$$$Lambda$12509/0x0000000802d04498@3264f16c
 //   ),
-//   fs = cats.effect.kernel.Resource$$Lambda$12503/0x000000080253b668@73cb7250
+//   fs = cats.effect.kernel.Resource$$Lambda$12508/0x0000000802d040c8@12af1018
 // )
 publisher.use { p =>
   p.toStream[IO].compile.toList
 }
 // res56: IO[List[Int]] = Uncancelable(
-//   body = cats.effect.IO$$$Lambda$11953/0x0000000802c55f50@5577279f,
+//   body = cats.effect.IO$$$Lambda$11950/0x0000000802bd05b0@32cb7a13,
 //   event = cats.effect.tracing.TracingEvent$StackTrace
 // )
 ```
