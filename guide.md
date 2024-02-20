@@ -48,7 +48,7 @@ val s0 = Stream.empty
 val s1 = Stream.emit(1)
 // s1: Stream[[x]fs2.package.Pure[x], Int] = Stream(..)
 val s1a = Stream(1,2,3) // variadic
-// s1a: Stream[[x]fs2.package.Pure[x], Int] = Stream(..) // variadic
+// s1a: Stream[[x]fs2.package.Pure[x], Int] = Stream(..)
 val s1b = Stream.emits(List(1,2,3)) // accepts any Seq
 // s1b: Stream[[x]fs2.package.Pure[x], Int] = Stream(..)
 ```
@@ -127,9 +127,9 @@ The first `.compile.toVector` is one of several methods available to 'compile' t
 
 ```scala
 val ra = eff.compile.toVector // gather all output into a Vector
-// ra: IO[Vector[Int]] = IO(...) // gather all output into a Vector
+// ra: IO[Vector[Int]] = IO(...)
 val rb = eff.compile.drain // purely for effects
-// rb: IO[Unit] = IO(...) // purely for effects
+// rb: IO[Unit] = IO(...)
 val rc = eff.compile.fold(0)(_ + _) // run and accumulate some result
 // rc: IO[Int] = IO(...)
 ```
@@ -590,10 +590,10 @@ val program =
 // program: Stream[[x]IO[x], Unit] = Stream(..)
 
 program.compile.drain.unsafeRunSync()
-// 12:48:08.048290459
-// 12:48:09.046983262
-// 12:48:10.046195970
-// 12:48:11.046191487
+// 23:42:55.051398446
+// 23:42:56.050497592
+// 23:42:57.050115741
+// 23:42:58.050086387
 ```
 
 Let's take this line by line now, so we can understand what's going on.
@@ -635,10 +635,10 @@ val program1 =
 // program1: Stream[[x]IO[x], Unit] = Stream(..)
 
 program1.compile.drain.unsafeRunSync()
-// 12:48:13.049169863
-// 12:48:14.049133685
-// 12:48:15.049053505
-// 12:48:16.049145728
+// 23:43:00.050730865
+// 23:43:01.050756063
+// 23:43:02.050736518
+// 23:43:03.050819912
 ```
 
 ### Talking to the external world
@@ -656,7 +656,7 @@ We'll consider each of these in turn.
 These are easy to deal with. Just wrap these effects in a `Stream.eval`:
 
 ```scala
-def destroyUniverse(): Unit = { println("BOOOOM!!!"); } // stub implementation // stub implementation
+def destroyUniverse(): Unit = { println("BOOOOM!!!"); } // stub implementation
 
 val s = Stream.exec(IO { destroyUniverse() }) ++ Stream("...moving on")
 // s: Stream[[x]IO[x], String] = Stream(..)
@@ -671,7 +671,7 @@ The way you bring synchronous effects into your effect type may differ. `Sync.de
 import cats.effect.Sync
 
 val T = Sync[IO]
-// T: cats.effect.kernel.Async[IO] = cats.effect.IO$$anon$4@34fa9ccc
+// T: cats.effect.kernel.Async[IO] = cats.effect.IO$$anon$5@6de4b928
 val s2 = Stream.exec(T.delay { destroyUniverse() }) ++ Stream("...moving on")
 // s2: Stream[[x]IO[x], String] = Stream(..)
 s2.compile.toVector.unsafeRunSync()
@@ -803,14 +803,20 @@ stream.toUnicastPublisher
 // res55: Resource[[A]IO[A], StreamUnicastPublisher[[A]IO[A], Int]] = Bind(
 //   source = Bind(
 //     source = Bind(
-//       source = Pure(
-//         a = cats.effect.std.Dispatcher$$$Lambda$12628/0x0000000802d28000@3af0b66d
+//       source = Bind(
+//         source = Eval(
+//           fa = Delay(
+//             thunk = cats.effect.IO$$$Lambda$10856/0x00007facc7e19ac0@7410a653,
+//             event = cats.effect.tracing.TracingEvent$StackTrace
+//           )
+//         ),
+//         fs = cats.effect.std.Supervisor$$$Lambda$11528/0x00007facc7fc5fc8@23b12509
 //       ),
-//       fs = cats.effect.std.Dispatcher$$$Lambda$12629/0x0000000802d283d0@3159c4b6
+//       fs = cats.effect.kernel.Resource$$Lambda$11530/0x00007facc7fc6768@41c16949
 //     ),
-//     fs = cats.FlatMap$$Lambda$11972/0x0000000802ba42f0@6743c46c
+//     fs = cats.effect.std.Dispatcher$$$Lambda$11531/0x00007facc7fc6b38@9a4b5a0
 //   ),
-//   fs = cats.Monad$$Lambda$12060/0x0000000802bfd2a8@7bf38b4
+//   fs = cats.effect.kernel.Resource$$Lambda$11530/0x00007facc7fc6768@7877a8f9
 // )
 ```
 
@@ -821,24 +827,30 @@ val publisher: Resource[IO, StreamUnicastPublisher[IO, Int]] = Stream(1, 2, 3).c
 // publisher: Resource[IO, StreamUnicastPublisher[IO, Int]] = Bind(
 //   source = Bind(
 //     source = Bind(
-//       source = Pure(
-//         a = cats.effect.std.Dispatcher$$$Lambda$12628/0x0000000802d28000@3843a5f0
+//       source = Bind(
+//         source = Eval(
+//           fa = Delay(
+//             thunk = cats.effect.IO$$$Lambda$10856/0x00007facc7e19ac0@52c44393,
+//             event = cats.effect.tracing.TracingEvent$StackTrace
+//           )
+//         ),
+//         fs = cats.effect.std.Supervisor$$$Lambda$11528/0x00007facc7fc5fc8@1805f3a3
 //       ),
-//       fs = cats.effect.std.Dispatcher$$$Lambda$12629/0x0000000802d283d0@4740ba3a
+//       fs = cats.effect.kernel.Resource$$Lambda$11530/0x00007facc7fc6768@34205cb6
 //     ),
-//     fs = cats.FlatMap$$Lambda$11972/0x0000000802ba42f0@3ed9661a
+//     fs = cats.effect.std.Dispatcher$$$Lambda$11531/0x00007facc7fc6b38@71551aab
 //   ),
-//   fs = cats.Monad$$Lambda$12060/0x0000000802bfd2a8@405d83ed
+//   fs = cats.effect.kernel.Resource$$Lambda$11530/0x00007facc7fc6768@17d07c9
 // )
 publisher.use { p =>
   p.toStream[IO].compile.toList
 }
 // res56: IO[List[Int]] = FlatMap(
 //   ioe = Delay(
-//     thunk = cats.effect.std.Dispatcher$$$Lambda$12631/0x0000000802d2b578@6594d233,
+//     thunk = cats.effect.IO$$$Lambda$10856/0x00007facc7e19ac0@52c44393,
 //     event = cats.effect.tracing.TracingEvent$StackTrace
 //   ),
-//   f = cats.effect.kernel.Resource$$Lambda$12633/0x0000000802d2bc00@27c725d1,
+//   f = cats.effect.kernel.Resource$$Lambda$11533/0x00007facc7fc7b98@365274ae,
 //   event = cats.effect.tracing.TracingEvent$StackTrace
 // )
 ```
@@ -858,7 +870,7 @@ Want to learn more?
   * UDP networking
   * Contributions welcome! If you are familiar with one of the modules of the library and would like to contribute a more detailed guide for it, submit a PR.
 
-Also feel free to come discuss and ask/answer questions in [the gitter channel](https://gitter.im/functional-streams-for-scala/fs2) and/or on StackOverflow using [the tag FS2](http://stackoverflow.com/tags/fs2).
+Also feel free to come discuss and ask/answer questions in [the Typelevel Discord channel](https://discord.gg/9V8FZTVZ9R) and/or on StackOverflow using [the tag FS2](http://stackoverflow.com/tags/fs2).
 
 ### Appendixes
 
